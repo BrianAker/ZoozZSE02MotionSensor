@@ -17,7 +17,7 @@
 
 def getDriverVersion()
 {
-	return "v1.9"
+	return "v1.10"
 }
 
 metadata {
@@ -293,6 +293,8 @@ def configure()
 		zwave.associationV2.associationSet(groupingIdentifier:1, nodeId:[zwaveHubNodeId]).format()
 	], 500)	
 	refresh()
+
+  sendEvent(name: "driverVersion", value: getDriverVersion(), displayed:true)
 }
 
 private setConfigured(String set_param, Boolean setConf)
