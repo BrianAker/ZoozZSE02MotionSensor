@@ -17,7 +17,13 @@
 
 def getDriverVersion()
 {
-	return "v1.10"
+	return "v1.17"
+}
+
+preferences 
+{
+	input("controller", "boolean", title: "Enable configuration, Smartthings is the primary controller of the device.", defaultValue: false)		 
+	input("motionTimeout", "number", title: "Motion timeout in minutes (default 5 minutes)", defaultValue: 5)
 }
 
 metadata {
@@ -27,7 +33,18 @@ metadata {
 		capability "Configuration"
 		capability "Motion Sensor"
 		capability "Refresh"
+		capability "Motion Sensor"
 		capability "Tamper Alert"
+
+		attribute "configured", "enum", ["unconfirgured", "configured", "reset"]
+		attribute "MSR", "string"
+		attribute "Manufacturer", "string"
+		attribute "ManufacturerCode", "string"
+		attribute "ProduceTypeCode", "string"
+		attribute "ProductCode", "string"
+		attribute "WakeUp", "string"
+		attribute "WirelessConfig", "string"
+		attribute "firmwareVersion", "string"
 	}
 
 	// zw:S type:0701 mfr:0152 prod:0500 model:0003 ver:0.01 zwv:3.95 lib:06 cc:5E,85,59,71,80,5A,73,84,72,86 role:06 ff:8C07 ui:8C07
@@ -51,33 +68,45 @@ metadata {
 		}
 		valueTile("tamper", "device.tamper", inactiveLabel: false, decoration: "flat", width: 2, height: 2)
 		{
-			state "clear", label:'NO TAMPER', backgroundColor:"#ff0000"
-			state("detected", label:'TAMPER DETECTED', backgroundColor:"#53a7c0")
+			state "clear", backgroundColor:"#00FF00"
+			state("detected", backgroundColor:"#e51426")
 		}
 		valueTile("battery", "device.battery", inactiveLabel: false, decoration: "flat", width: 2, height: 2)
 		{
-			state("battery", label:'${currentValue}% battery', unit:"")
+			state("battery", label:'${currentValue}', unit:"%")
 		}
 		valueTile("driverVersion", "device.driverVersion", inactiveLabel: false, decoration: "flat", width: 2, height: 2) 
 		{
-			state("driverVersion", label:'${currentValue}')
+			state("driverVersion", label: getDriverVersion())
 		}
 		standardTile("configure", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2)
 		{
-			state "default", label:"", action:"configure", icon:"st.secondary.configure"
+			state "default", label:"", action:"configuration.configure", icon:"st.secondary.configure"
 		}
 		standardTile("refresh", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2)
 		{
 			state "default", label:'', action: "refresh.refresh", icon: "st.secondary.refresh"
 		}
+		standardTile("reset", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2)
+		{
+			state "configured", label:'', backgroundColor:"#ffffff"
+			state "reset", label:'reset', backgroundColor:"#e51426"
+		}
 		main(["main"])
-		details(["main", "tamper", "battery", "driverVersion", "configure", "refresh"])
+		details(["main", "tamper", "battery", "driverVersion", "configure", "refresh", "reset"])
 	}
+}
+
+def installed()
+{
+	sendEvent([name: "driverVersion", value: getDriverVersion(), isStateChange: true])
+	sendEvent([name: "configured", value: "unconfigured", isStateChange: true])
 }
 
 def updated()
 {
-	updateDataValue("configured", "false")
+	sendEvent(name: "driverVersion", value: getDriverVersion(), displayed:true)
+	sendEvent(name: "configured", value: "false", displayed:true)
 }
 
 def parse(String description)
@@ -113,44 +142,59 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv2.WakeUpNotification cmd)
 			result << response(zwave.batteryV1.batteryGet())
 		}
 	}
-	else
-	{
-		result << response(zwave.wakeUpV1.wakeUpNoMoreInformation())
-	}
-	
+
 	result
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.deviceresetlocallyv1.DeviceResetLocallyNotification cmd)
 {
-  log.info "Executing zwaveEvent 5A (DeviceResetLocallyV1) : 01 (DeviceResetLocallyNotification) with cmd: $cmd" 
-  createEvent(descriptionText: cmd.toString(), isStateChange: true, displayed: true) 
+	log.info "Executing zwaveEvent 5A (DeviceResetLocallyV1) : 01 (DeviceResetLocallyNotification) with cmd: $cmd" 
+		createEvent(name: "reset", value: "reset", descriptionText: cmd.toString(), isStateChange: true, displayed: true) 
 } 
 
-def zwaveEvent(physicalgraph.zwave.commands.manufacturerspecificv2.ManufacturerSpecificReport cmd) 
+def zwaveEvent(physicalgraph.zwave.commands.manufacturerspecificv1.ManufacturerSpecificReport cmd) 
 {
 	def result = []
 
-	def msr = String.format("%04X-%04X-%04X", cmd.manufacturerId, cmd.productTypeId, cmd.productId)
-	log.debug "msr: $msr"
-	updateDataValue("MSR", msr)
+	def manufacturerCode = String.format("%04X", cmd.manufacturerId)
+	def productTypeCode = String.format("%04X", cmd.productTypeId)
+	def productCode = String.format("%04X", cmd.productId)
+	def wirelessConfig = "ZWP"
 
-	result << createEvent(descriptionText: "$device.displayName MSR: $msr", isStateChange: false)
-	result
+	result << createEvent(name: "ManufacturerCode", value: manufacturerCode)
+	result << createEvent(name: "ProduceTypeCode", value: productTypeCode)
+	result << createEvent(name: "ProductCode", value: productCode)
+	result << createEvent(name: "WirelessConfig", value: wirelessConfig)
+
+	def msr = String.format("%04X-%04X-%04X", cmd.manufacturerId, cmd.productTypeId, cmd.productId)
+	updateDataValue("MSR", msr)	updateDataValue("MSR", msr)
+	updateDataValue("manufacturer", cmd.manufacturerName)
+	if (!state.manufacturer) {
+		state.manufacturer= cmd.manufacturerName
+	}
+
+	result << createEvent([name: "MSR", value: "$msr", descriptionText: "$device.displayName", isStateChange: false])
+	result << createEvent([name: "Manufacturer", value: "${cmd.manufacturerName}", descriptionText: "$device.displayName", isStateChange: false])
+
+	return result
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) 
 {
-  log.info "Executing zwaveEvent 86 (VersionV1) with cmd: $cmd"
-  def fw = "${cmd.applicationVersion}.${cmd.applicationSubVersion}"
-  updateDataValue("fw", fw)
-  updateDataValue("firmwareVersion", fw)
-  def text = "$device.displayName: firmware version: $fw, Z-Wave version: ${cmd.zWaveProtocolVersion}.${cmd.zWaveProtocolSubVersion}"
-  createEvent(descriptionText: text, isStateChange: false)
+	log.info "Executing zwaveEvent 86 (VersionV1) with cmd: $cmd"
+	def text = "$device.displayName: firmware version: ${cmd.applicationVersion}.${cmd.applicationSubVersion}, Z-Wave version: ${cmd.zWaveProtocolVersion}.${cmd.zWaveProtocolSubVersion}"
+	createEvent([name: "firmwareVersion", value: "${cmd.applicationVersion}.${cmd.applicationSubVersion}", descriptionText: "$text", isStateChange: false])
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd)
 {
+	def results = []
+
+	if (!isConfigured())
+	{
+		results << configure()
+	}
+
 	def map = [ name: "battery", unit: "%" ]
 	if (cmd.batteryLevel == 0xFF)
 	{
@@ -164,14 +208,9 @@ def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd)
 	}
 	state.lastbat = new Date().time
 
-	if (!isConfigured())
-	{
-		configure()
-	}
-	else
-	{
-		[createEvent(map), response(zwave.wakeUpV1.wakeUpNoMoreInformation())]
-	}
+	results << createEvent(map)
+
+	return results
 }
 
 def motionEvent(value)
@@ -191,6 +230,11 @@ def motionEvent(value)
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd)
+{
+	motionEvent(cmd.value)
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.alarmv2.AlarmReport cmd)
 {
 	motionEvent(cmd.value)
 }
@@ -230,7 +274,7 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
 		result << createEvent(descriptionText: cmd.toString(), isStateChange: true)
 	}
 
-	result
+	return result
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd)
@@ -241,20 +285,17 @@ def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd)
 		if (cmd.nodeId.any { it == zwaveHubNodeId }) 
 		{
 			result << createEvent(descriptionText: "$device.displayName is associated in group ${cmd.groupingIdentifier}")
-			setConfigured("Group1", true)
+				result << createEvent(name: "configured", value: "configured", descriptionText: "$device.displayName not associated with hub", isStateChange: true)
 		}
 		else
 		{
-			setConfigured("Group1", false)
-			result << createEvent(descriptionText: "Associating $device.displayName in group ${cmd.groupingIdentifier}")
 			result << response(zwave.associationV2.associationSet(groupingIdentifier:cmd.groupingIdentifier, nodeId:zwaveHubNodeId))
-			result << response(zwave.associationV2.associationGet(groupingIdentifier:cmd.groupingIdentifier))
+				result << response(zwave.associationV2.associationGet(groupingIdentifier:cmd.groupingIdentifier))
+				result << createEvent(name: "configured", value: "unconfigured", descriptionText: "$device.displayName not associated with hub", isStateChange: true)
 		}
 	}
-	else
-	{
-		result << createEvent(descriptionText: "$device.displayName lacks group $cmd.groupingIdentifier")
-	}
+
+	return result
 }
 
 def zwaveEvent(physicalgraph.zwave.Command cmd)
@@ -267,10 +308,9 @@ def refresh()
 	log.debug "refresh() is called"
 
 	def commands = [
-	zwave.switchBinaryV1.switchBinaryGet().format(),
 	zwave.notificationv3.NotificationGet.format(),
-	zwave.batteryV1.batteryGet().format(),
-	zwave.associationV2.associationGet(groupingIdentifier:1).format()
+		zwave.batteryV1.batteryGet().format(),
+		zwave.associationV2.associationGet(groupingIdentifier:1).format()
 	]
 	if (getDataValue("MSR") == null)
 	{
@@ -278,41 +318,21 @@ def refresh()
 	}
 	if (device.currentState('firmwareVersion') == null)
 	{
-		commands << zwave.versionV2.versionGet().format()
+		commands << zwave.versionv1.VersionGet().format()
 	}
-	delayBetween(commands, 6000)
+	response(delayBetween(commands, 6000))
 }
 
 def configure()
 {
-	updateDataValue("driverVersion", getDriverVersion())
-
-	setConfigured("Group1", false)
-	delayBetween([
-		// Can use the zwaveHubNodeId variable to add the hub to the device's associations:
-		zwave.associationV2.associationSet(groupingIdentifier:1, nodeId:[zwaveHubNodeId]).format()
-	], 500)	
 	refresh()
-
-  sendEvent(name: "driverVersion", value: getDriverVersion(), displayed:true)
-}
-
-private setConfigured(String set_param, Boolean setConf)
-{
-	if ( setConf )
-  {
-		updateDataValue(set_param, "true")
-		updateDataValue("configured", "true")
-	}
-	else
-  {
-		updateDataValue("Group1", "false")
-		updateDataValue("configured", "false")
-	}
-	return []
+	response(delayBetween([
+	zwave.associationV2.associationSet(groupingIdentifier:1, nodeId:zwaveHubNodeId).format(),
+	zwave.associationV2.associationGet(groupingIdentifier:1).format()
+	], 500))
 }
 
 private isConfigured()
 {
-	getDataValue("configured") == "true"
+	device.configured == "configured"
 }
